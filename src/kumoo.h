@@ -70,14 +70,13 @@ int ku_pgfault_handler(unsigned short virtualADDR){ //16비트
     if(VPN >= PFNUM) return 0;
 
     unsigned short PDindex = (VPN & PD_MASK) >> SHIFT;
-    unsigned short PDE = pdbr + PDindex; //pdbr 현재 프로세스의 pdbr로 변경
-    //current->pgdir = PDE;
+    short* PDE = pdbr + PDindex; //pdbr 현재 프로세스의 pdbr로 변경
 
     
-    ptbr = (PDE & PFN_MASK) >> PFN_SHIFT;
+    int PFN = (*PDE & PFN_MASK) >> PFN_SHIFT;
+    ptbr = (unsigned short*)(pmem+(PFN << 6));
     unsigned short PTindex = (VPN & PT_MASK);
     unsigned char* PTE = ptbr + PTindex;
-    //current->pgt = PTE;
 
     //접근하려는 pfn이 disk에 있을 때
     if((*PTE & 0x0001) == 0 && ((*PTE) << 1) != 0){ //present bit가 0인데, pfn이나 dirty가 0이 아니라면 swap out 되어있는 것
@@ -133,18 +132,6 @@ int ku_pgfault_handler(unsigned short virtualADDR){ //16비트
 
 }
 
-// unsigned short PDindex = (VPN & PD_MASK) >> SHIFT;
-//     unsigned short PDEAddr = pdbr + (PDindex * sizeof(ADDR_SIZE));
-        
-//     unsigned short PTE = (PDEAddr & PFN_MASK) >> PFN_SHIFT;
-//     unsigned short PTindex = (VPN & PT_MASK);
-//     unsigned PTEAddr = PTE + (PTindex * sizeof(ADDR_SIZE));
-
-//     unsigned short PFN = (PTEAddr & PFN_MASK) >> PFN_SHIFT;
-    // unsigned short PFN = (PTE & PFN_MASK) >> PFN_SHIFT;
-    // char *page_table_entry = ptbr + ;
-    
-
 int ku_scheduler(unsigned short){
 
 }
@@ -153,6 +140,61 @@ int ku_proc_exit(unsigned short){
 
 }
 
-void ku_proc_init(int argv1, char* argv2){
+void ku_proc_init(int argv1, char* argv2){ 
+    //실행할 수 있는 프로세스들의 pcb, page directory를 생성한다
+    //내부적으로 page directory를 할당을 하고 다 0으로 채워넣는다 (추후에 pde, pte로 채워넣어질 것이다)
+    //page directory는 swap out되지 않는다
+
+    FILE* fd = fopen("input.txt", "r");
+    int pid;
+    char processName[100];
+
+    if (fd == NULL) {
+        perror("파일 열기 오류");
+        return;
+    }
+
+    while(1){ //더이상 읽히지 않을때까지
+        if(fscanf(fd, "%d %s", &pid, processName) == EOF){
+            printf("파일에서 데이터를 읽을 수 없습니다.\n");
+            fclose(fd);
+            return; //break역할
+        }
+
+        printf("%d %s\n", pid, processName);
+        processList = (pcbNode*)malloc(sizeof(pcbNode));
+
+        while(1){
+            if(processList->pcblock.pid == pid){ //pid가 같은 경우 pcb를 생성하지 않고 change해준다
+                processList->pcblock.fd = fopen(processName, "r");
+                return;
+            }
+        }
+    
+
+        struct pcb process = processList->pcblock;
+        process.pid = pid;
+        process.fd = fopen(processName, "r");
+        process.pgdir = malloc(PAGE_SIZE); //64 byte할당
+
+        if(processList == NULL){
+            processList->pcblock = process;
+            processList->next = NULL;
+            
+        }else{
+            while(processList->next == NULL){
+                processList = processList->next;
+            }
+            processList->pcblock = process;
+            processList->next = NULL;
+        }
+
+        for(int i=0; i<PAGE_SIZE; i++){
+            process.pgdir[i] = 0;
+        }
+    }
+   
+    // 파일 닫기
+    fclose(fd);
 
 }
