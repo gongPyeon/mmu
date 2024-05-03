@@ -19,6 +19,9 @@ int pfnum, sfnum; //각각 page frame의 개수
 char* pmem_free, *swaps_free; //물리 메모리의 free list
 int pidCount = 0; // pid개수
 
+void ku_dump_pmem(void);
+void ku_dump_swap(void);
+
 struct pcb{
     unsigned short pid;
     FILE *fd;
@@ -242,7 +245,7 @@ int ku_proc_exit(unsigned short pid){ //종료시킬 pid가 넘어온다
 
 }
 
-void ku_proc_init(int argv1, char* argv2){ 
+void ku_proc_init(int argc, char *argv[]){ 
     //실행할 수 있는 프로세스들의 pcb, page directory를 생성한다
     //내부적으로 page directory를 할당을 하고 다 0으로 채워넣는다 (추후에 pde, pte로 채워넣어질 것이다)
     //page directory는 swap out되지 않는다

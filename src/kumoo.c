@@ -42,7 +42,7 @@ void ku_reg_handler(int flag, int (*func)(unsigned short)){ //핸들러 등록
 	}
 }
 
-int ku_traverse(char va){
+int ku_traverse(short va){
 	int pd_index, pt_index, pa;
     unsigned short *ptbr;
 	short *pte, *pde;
@@ -74,6 +74,8 @@ int ku_traverse(char va){
 
 void ku_os_init(void){
     /* Initialize physical memory*/
+    pfnum = 1 << 12;
+    sfnum = 1 << 14;
     pmem = (char*)malloc(64 << 12); //256kb 할당
     swaps = (char*)malloc(64 << 14); //1mb 할당
     /* Init free list*/
