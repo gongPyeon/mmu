@@ -16,13 +16,13 @@ unsigned short *pdbr; //page directory base주소를 가리키는 포인터
 unsigned short *ptbr; // page table base 주소를 가리키는 포인터
 char *pmem, *swaps; //각각 물리 메모리와 swap공간에 대한 base주소를 가리키는 포인터
 int pfnum, sfnum; //각각 page frame의 개수
-unsigned short* pmem_free, *swaps_free; //물리 메모리의 free list
+char* pmem_free, *swaps_free; //물리 메모리의 free list
+int pidCount = 0; // pid개수
 
 struct pcb{
     unsigned short pid;
     FILE *fd;
     unsigned short *pgdir; //page directory에 대한 주소
-    unsigned short *pgt; //page table에 대한 주소
 };
 
 // pcb process list
@@ -46,12 +46,12 @@ void ku_freelist_init(void){
     pfnum = PFNUM;
     sfnum = SFNUM;
 
-    pmem_free = (unsigned short*)malloc(sizeof(unsigned short)*PFNUM);
+    pmem_free = malloc(PFNUM);
     for(int i=0; i<PFNUM; i++){
         pmem_free[i] = 0;
     }
 
-    swaps_free = (unsigned short*)mallock(sizeof(unsigned short)*SFNUM);
+    swaps_free = malloc(SFNUM);
      for(int i=0; i<SFNUM; i++){
         swaps_free[i] = 0;
     }
@@ -136,11 +136,71 @@ int ku_pgfault_handler(unsigned short virtualADDR){ //16비트
 
 }
 
-int ku_scheduler(unsigned short){
+int ku_scheduler(unsigned short pid){ //현재 실행되고 있는 current process의 id가 넘어온다
+    //다음번 실행할 프로세스를 선정한다
+    unsigned short nextpid;
+    struct pcbNode *cur = processList;
+
+    if(processList == NULL){
+        return 1;
+    }else{
+
+        while(1){ //while로 pid를 하나씩 늘려가면서 확인하는 방법 | processlist를 정렬해서 관리하는 방법, 우선 전자를 택했다
+            nextpid = (pid+1) % 10; //10이 들어올 경우 다시 0을 실행해야하기 때문
+
+            while(cur != NULL){
+                if(cur->pcblock.pid == pid){ 
+                    cur = cur->next; //다음 프로세스를 선택
+                    *current = cur->pcblock;
+                    pdbr = current->pgdir;
+                    return 0;
+                }
+                cur = cur->next;
+            }
+        }
+    }
 
 }
 
-int ku_proc_exit(unsigned short){
+int ku_proc_exit(unsigned short pid){ //종료시킬 pid가 넘어온다
+    //process의 pcb를 삭제한다
+    //process의 page frame과 swap frame의 자원을 회수한다
+    //free list를 업데이트한다
+
+    struct pcbNode* prev;
+    struct pcbNode *cur = processList;
+
+    while(cur != NULL){ //for(int i =0; i<pidCount; i++)
+        if(cur->pcblock.pid == pid){ //pid가 같은 경우가 있는지 확인한다
+           
+           fclose(cur->pcblock.fd); //해당 pcb의 file close
+           free(cur->pcblock.pgdir); //page directory 자원해제
+           free(cur); //해당 pcb 해제
+           cur = NULL;
+
+
+            //리스트에서 해당 프로세스 노드 제거
+            if (prev != NULL) {
+                prev->next = cur->next;
+            } else {
+                processList = cur->next;
+            }
+            free(current); //해당 pcb 해제
+
+            memset(&swaps[pidCount * PAGE_SIZE], 0, PAGE_SIZE);
+            swaps_free[pidCount] = 0;
+
+            // pidCount 감소
+            pidCount--;
+
+           return 0;
+        }
+        prev = cur;
+        current = cur->next;
+    }
+
+    //invalid pid
+    return 1;
 
 }
 
@@ -166,41 +226,45 @@ void ku_proc_init(int argv1, char* argv2){
         }
 
         printf("%d %s\n", pid, processName);
-        processList = (pcbNode*)malloc(sizeof(pcbNode));
 
         while(1){
             if(processList->pcblock.pid == pid){ //pid가 같은 경우가 있는지 확인한다
                 pidSame = 1;
             }
+            processList = processList->next;
         }
 
         if(pidSame == 1){ //pid가 같은 경우 실행파일만 변경한다
             processList->pcblock.fd = fopen(processName, "r");
-            *current = processList->pcblock;
 
         }else{ //pid가 같은게 없는 경우(pid가 같은게 여러개일 경우가 있을까?)
-            struct pcb process = processList->pcblock;
-            process.pid = pid;
-            process.fd = fopen(processName, "r");
-            process.pgdir = malloc(PAGE_SIZE); //64 byte할당
 
-            if(processList == NULL){ //process가 하나도 실행되지 않았을때
-                processList->pcblock = process;
+            pcbNode* newProcessNode = (pcbNode*)malloc(sizeof(pcbNode));
+            newProcessNode->pcblock.pid = pid;
+            newProcessNode->pcblock.fd = fopen(processName, "r");
+            newProcessNode->pcblock.pgdir = malloc(PAGE_SIZE); // 64 byte 할당
+        
+
+            if(processList == NULL){ // process가 하나도 실행되지 않았을 때
+                processList = newProcessNode;
                 processList->next = NULL;
-                *current = processList->pcblock;
-                
-            }else{ //process가 하나 이상 실행됐을 때
-                while(processList->next == NULL){
-                    processList = processList->next;
+                pidCount++;
+            }else{ // process가 하나 이상 실행됐을 때
+                pcbNode* temp = processList;
+                while(temp->next != NULL){
+                    temp = temp->next;
                 }
-                processList->pcblock = process;
-                processList->next = NULL;
-                *current = processList->pcblock;
+                temp->next = newProcessNode; // 마지막에 추가한다
+                newProcessNode->next = NULL;
+                pidCount++;
             }
 
             for(int i=0; i<PAGE_SIZE; i++){
-                process.pgdir[i] = 0;
+                newProcessNode->pcblock.pgdir[i] = 0;
             }
+            // swap에 pgdir만큼의 크기를 할당해야한다
+            memcpy(&swaps[pidCount * PAGE_SIZE], newProcessNode->pcblock.pgdir, PAGE_SIZE);
+            swaps_free[pidCount] = 1; //pidcount를 곱하는게 맞아?
         }
     }
    

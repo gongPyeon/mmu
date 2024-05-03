@@ -216,7 +216,7 @@ void ku_run_procs(void){
 
 int main(int argc, char *argv[]){
 	/* System initialization */
-	//ku_os_init();
+	ku_os_init();
 	/* Per-process initialization */
 	ku_proc_init(atoi(argv[1]), argv[2]);
 	/* Process execution */
