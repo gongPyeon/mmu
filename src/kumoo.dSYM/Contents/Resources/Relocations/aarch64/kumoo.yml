@@ -1,0 +1,28 @@
+---
+triple:          'arm64-apple-darwin'
+binary-path:     '/Users/pyeongang/vs/kumu/src/kumoo'
+relocations:
+  - { offsetInCU: 0x26, offset: 0x26, size: 0x8, addend: 0x0, symName: _ku_freelist_init, symObjAddr: 0x0, symBinAddr: 0x100003610, symSize: 0x4 }
+  - { offsetInCU: 0x4D, offset: 0x4D, size: 0x8, addend: 0x0, symName: _current, symBinAddr: 0x100008000, symSize: 0x0 }
+  - { offsetInCU: 0x29C, offset: 0x29C, size: 0x8, addend: 0x0, symName: _pdbr, symBinAddr: 0x100008020, symSize: 0x0 }
+  - { offsetInCU: 0x2B1, offset: 0x2B1, size: 0x8, addend: 0x0, symName: _pmem, symBinAddr: 0x100008030, symSize: 0x0 }
+  - { offsetInCU: 0x2C6, offset: 0x2C6, size: 0x8, addend: 0x0, symName: _swaps, symBinAddr: 0x100008040, symSize: 0x0 }
+  - { offsetInCU: 0x2DB, offset: 0x2DB, size: 0x8, addend: 0x0, symName: _pfnum, symBinAddr: 0x100008028, symSize: 0x0 }
+  - { offsetInCU: 0x2F0, offset: 0x2F0, size: 0x8, addend: 0x0, symName: _sfnum, symBinAddr: 0x100008038, symSize: 0x0 }
+  - { offsetInCU: 0x305, offset: 0x305, size: 0x8, addend: 0x0, symName: _kuos, symBinAddr: 0x100008008, symSize: 0x0 }
+  - { offsetInCU: 0x34B, offset: 0x34B, size: 0x8, addend: 0x0, symName: _ku_freelist_init, symObjAddr: 0x0, symBinAddr: 0x100003610, symSize: 0x4 }
+  - { offsetInCU: 0x360, offset: 0x360, size: 0x8, addend: 0x0, symName: _ku_pgfault_handler, symObjAddr: 0x4, symBinAddr: 0x100003614, symSize: 0x14 }
+  - { offsetInCU: 0x384, offset: 0x384, size: 0x8, addend: 0x0, symName: _ku_scheduler, symObjAddr: 0x18, symBinAddr: 0x100003628, symSize: 0x14 }
+  - { offsetInCU: 0x3A8, offset: 0x3A8, size: 0x8, addend: 0x0, symName: _ku_proc_exit, symObjAddr: 0x2C, symBinAddr: 0x10000363C, symSize: 0x14 }
+  - { offsetInCU: 0x3CC, offset: 0x3CC, size: 0x8, addend: 0x0, symName: _ku_proc_init, symObjAddr: 0x40, symBinAddr: 0x100003650, symSize: 0x14 }
+  - { offsetInCU: 0x3FE, offset: 0x3FE, size: 0x8, addend: 0x0, symName: _ku_dump_pmem, symObjAddr: 0x54, symBinAddr: 0x100003664, symSize: 0x80 }
+  - { offsetInCU: 0x430, offset: 0x430, size: 0x8, addend: 0x0, symName: _ku_dump_swap, symObjAddr: 0xD4, symBinAddr: 0x1000036E4, symSize: 0x80 }
+  - { offsetInCU: 0x462, offset: 0x462, size: 0x8, addend: 0x0, symName: _ku_reg_handler, symObjAddr: 0x154, symBinAddr: 0x100003764, symSize: 0xA4 }
+  - { offsetInCU: 0x494, offset: 0x494, size: 0x8, addend: 0x0, symName: _ku_traverse, symObjAddr: 0x1F8, symBinAddr: 0x100003808, symSize: 0x108 }
+  - { offsetInCU: 0x51E, offset: 0x51E, size: 0x8, addend: 0x0, symName: _ku_os_init, symObjAddr: 0x300, symBinAddr: 0x100003910, symSize: 0x6C }
+  - { offsetInCU: 0x533, offset: 0x533, size: 0x8, addend: 0x0, symName: _op_read, symObjAddr: 0x36C, symBinAddr: 0x10000397C, symSize: 0x1BC }
+  - { offsetInCU: 0x58F, offset: 0x58F, size: 0x8, addend: 0x0, symName: _op_write, symObjAddr: 0x528, symBinAddr: 0x100003B38, symSize: 0x1E0 }
+  - { offsetInCU: 0x5F9, offset: 0x5F9, size: 0x8, addend: 0x0, symName: _do_ops, symObjAddr: 0x708, symBinAddr: 0x100003D18, symSize: 0xB4 }
+  - { offsetInCU: 0x639, offset: 0x639, size: 0x8, addend: 0x0, symName: _ku_run_procs, symObjAddr: 0x7BC, symBinAddr: 0x100003DCC, symSize: 0x100 }
+  - { offsetInCU: 0x6B1, offset: 0x6B1, size: 0x8, addend: 0x0, symName: _main, symObjAddr: 0x8BC, symBinAddr: 0x100003ECC, symSize: 0x50 }
+...
