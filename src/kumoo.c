@@ -90,11 +90,15 @@ void op_read(){
     unsigned char va;
     int addr, pa, ret = 0;
     char sorf = 'S';
+
+    printf("read함수 안에 들어왔음");
     /* get Address from the line */
     if(fscanf(current->fd, "%d", &addr) == EOF){
         /* Invaild file format */
         return;
     }
+    printf("여기까지 들어오면 current->fd가 된것임");
+
     va = addr & 0xFFFF; //가상 주소 16진수로 변환
     pa = ku_traverse(va); //해당 가상주소에 대해 유효한 물리주소를 반환한다
 
@@ -129,6 +133,7 @@ void op_write(){
     unsigned char va;
     int addr, pa, ret = 0;
     char input ,sorf = 'S';
+    printf("write함수 안에 들어왔음");
     /* get Address from the line */
     if(fscanf(current->fd, "%d %c", &addr, &input) == EOF){
         /* Invaild file format */
@@ -170,6 +175,7 @@ void do_ops(char op){
     int ret;
     switch(op){
         case 'r':
+            printf("read\n");
             op_read();
         break;
 
@@ -198,13 +204,15 @@ void ku_run_procs(void){
 	do{
 		if(!current) //현재 실행되고 있는 프로세스가 없으면
 			exit(0); //종료한다
-
-		for( i=0 ; i<TSLICE ; i++){
+        
+		for(i=0 ; i<TSLICE ; i++){
             /* Get operation from the line */
 			if(fscanf(current->fd, "%c", &op) == EOF){ //현재 파일 디스크립터의 연산정보(w,r,e)를 넣는다
                 /* Invaild file format */
                 return;
-			}
+			
+            }
+            printf("문자 %d : %c\n", i, op);
             do_ops(op); //연산 함수를 실행한다
 		}
 

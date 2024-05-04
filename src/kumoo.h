@@ -11,6 +11,8 @@
 #define PT_MASK 0x001F
 #define PFN_MASK 0xFFC0
 
+#include<string.h>
+
 struct pcb *current; // 현재 실행하고 있는 pcb를 가리키는 포인터
 unsigned short *pdbr; //page directory base주소를 가리키는 포인터
 unsigned short *ptbr; // page table base 주소를 가리키는 포인터
@@ -23,6 +25,7 @@ void ku_dump_pmem(void);
 void ku_dump_swap(void);
 
 struct pcb{
+    int base, bound;
     unsigned short pid;
     FILE *fd;
     unsigned short *pgdir; //page directory에 대한 주소
@@ -120,7 +123,7 @@ int ku_pgfault_handler(unsigned short virtualADDR){ //16비트 (2byte)
                 temp->next->pteAddress = PTE;
                 temp->next->next = NULL;
             }
-            memcpy(&pmem[i * PAGE_SIZE], swapInList[i], PAGE_SIZE); //메모리에 해당 current pcb 적재
+            memcpy(&pmem[i * PAGE_SIZE], (char*)1, PAGE_SIZE); //메모리 사용중 암시
             pmem_free[i] = 1;
             //swap in list에 추가한다
             return 0;
@@ -142,10 +145,11 @@ int ku_pgfault_handler(unsigned short virtualADDR){ //16비트 (2byte)
                     eviction->next = NULL; //첫번째거 쫓아내기 but page directory를 쫓아내면 안된다(how?)
                 }
                 else{ //dirty bit이 1일땐 swap space에 저장하고 추가하기
-                    *PTE = eviction->pteAddress; // pfn 저장
+                    *PTE = i << 2;
                     *PTE = *PTE | 0x0000; // present bit 1 설정
-                    memcpy(&swaps[i * PAGE_SIZE], current, PAGE_SIZE); //메모리에 해당 current pcb 적재
+                    memcpy(&swaps[i * PAGE_SIZE], (char*)1, PAGE_SIZE); //메모리에 해당 current pcb 적재
                     swaps_free[i] = 1;
+                    eviction->pteAddress = PTE;
                     eviction->next = NULL;
                 } 
 
@@ -153,7 +157,7 @@ int ku_pgfault_handler(unsigned short virtualADDR){ //16비트 (2byte)
                 int pfn = *(eviction->pteAddress)&0xFFF0; //pfn을 얻어온다
                 *PTE = *(eviction->pteAddress) | 0x0001; // present bit 1 설정
 
-                memcpy(&pmem[pfn * PAGE_SIZE], eviction, PAGE_SIZE); //메모리에 해당 current pcb 적재
+                memcpy(&pmem[pfn * PAGE_SIZE], (char*)1, PAGE_SIZE); //메모리 사용중 암시
                 pmem_free[pfn] = 1;
 
                 //swap in list에 추가한다
@@ -250,7 +254,7 @@ void ku_proc_init(int argc, char *argv[]){
     //내부적으로 page directory를 할당을 하고 다 0으로 채워넣는다 (추후에 pde, pte로 채워넣어질 것이다)
     //page directory는 swap out되지 않는다
 
-    FILE* fd = fopen("input.txt", "r");
+    FILE* fd = fopen("input.txt", "r+");
     int pid, pidSame = 0;
     char processName[100];
 
@@ -260,56 +264,110 @@ void ku_proc_init(int argc, char *argv[]){
     }
 
     while(1){ //더이상 읽히지 않을때까지
+        pidSame = 0;
+
         if(fscanf(fd, "%d %s", &pid, processName) == EOF){
             printf("파일에서 데이터를 읽을 수 없습니다.\n");
-            fclose(fd);
-            return; //break역할
+            break;
         }
 
         printf("%d %s\n", pid, processName);
 
-        while(1){
-            if(processList->pcblock.pid == pid){ //pid가 같은 경우가 있는지 확인한다
-                pidSame = 1;
-            }
-            processList = processList->next;
-        }
-
-        if(pidSame == 1){ //pid가 같은 경우 실행파일만 변경한다
-            processList->pcblock.fd = fopen(processName, "r");
-
-        }else{ //pid가 같은게 없는 경우(pid가 같은게 여러개일 경우가 있을까?)
-
-            pcbNode* newProcessNode = (pcbNode*)malloc(sizeof(pcbNode));
-            newProcessNode->pcblock.pid = pid;
-            newProcessNode->pcblock.fd = fopen(processName, "r");
-            newProcessNode->pcblock.pgdir = malloc(PAGE_SIZE); // 64 byte 할당
-        
+        if(pidSame == 0){ //pid가 같은게 없는 경우(pid가 같은게 여러개일 경우가 있을까?
 
             if(processList == NULL){ // process가 하나도 실행되지 않았을 때
-                processList = newProcessNode;
+                processList = (pcbNode *)malloc(sizeof(pcbNode));
                 processList->next = NULL;
+
+                processList->pcblock.pid = pid;
+                processList->pcblock.pgdir = (unsigned short*)malloc(sizeof(unsigned short)*32); //page table 생성
+                processList->pcblock.fd = fopen(processName, "r+");
+
+                char d;
+                int base, bound;
+                if (fscanf(processList->pcblock.fd, "%c %d %d", &d, &base, &bound) == EOF) {
+                    return;
+                }
+
+                printf("%c %d %d\n",d,base,bound);
+                processList->pcblock.base = base;
+                processList->pcblock.bound = bound;              
                 pidCount++;
+
+                for(int i=0; i<PAGE_SIZE; i++){
+                    processList->pcblock.pgdir[i] = 0;
+                }
+
+                current = NULL;
+                current = (struct pcb*)malloc(sizeof(struct pcb));
+                current->fd = processList->pcblock.fd;
+                current->pgdir = processList->pcblock.pgdir;
+                current->pid = processList->pcblock.pid;
+
+                //printf("two : %d %d\n", current->fd, processList->pcblock.fd);
+
             }else{ // process가 하나 이상 실행됐을 때
-                pcbNode* temp = processList;
-                while(temp->next != NULL){
+                struct pcbNode* temp = processList;
+                printf("하나이상\n");
+                while(1){
+
+                    if(temp->pcblock.pid == pid){ //pid가 같은 경우가 있는지 확인한다
+                        fclose(temp->pcblock.fd);
+                        temp->pcblock.fd = fopen(processName, "r+");
+
+                        processList = temp;
+                        pidSame = 1;
+                        break;
+                    }
+                    if(temp->next == NULL){
+                        printf("하나이상1-2\n");
+                        temp->next = (pcbNode*)malloc(sizeof(pcbNode));
+                        printf("하나이상2\n");
+                        temp = temp->next;
+                        temp->next = NULL;
+                        temp->pcblock.pid = pid;
+                        temp->pcblock.pgdir = (unsigned short*)malloc(sizeof(unsigned short)*32);
+                        for(int i=0; i<PAGE_SIZE; i++){
+                            temp->pcblock.pgdir[i] = 0;
+                        }
+                        printf("하나이상3\n");
+                        
+                        temp->pcblock.fd = fopen(processName, "r+");
+
+                        char d;
+                        int base, bound;
+                        if (fscanf(temp->pcblock.fd, "%c %d %d", &d, &base, &bound) == EOF) {
+                            return;
+                        }
+                        printf("%c %d %d\n",d,base,bound);
+                        temp->pcblock.base = base;
+                        temp->pcblock.bound = bound;
+
+                        processList = temp;
+                        pidCount++;
+                        printf("%d\n", temp->pcblock.fd);
+
+                        break;
+
+                    }
                     temp = temp->next;
                 }
-                temp->next = newProcessNode; // 마지막에 추가한다
-                newProcessNode->next = NULL;
-                pidCount++;
+
             }
 
-            for(int i=0; i<PAGE_SIZE; i++){
-                newProcessNode->pcblock.pgdir[i] = 0;
-            }
+
+            printf("three : %d\n", processList->pcblock.fd); //왜 newprocessnode로 접근하면 오류가 생기지?
             // swap에 pgdir만큼의 크기를 할당해야한다
-            memcpy(&pmem[pidCount * PAGE_SIZE], newProcessNode->pcblock.pgdir, PAGE_SIZE);
+            memcpy(&pmem[pidCount * PAGE_SIZE], processList->pcblock.pgdir, PAGE_SIZE);
             swaps_free[pidCount] = 1; //pidcount를 곱하는게 맞아?
         }
+        printf("\n");
     }
-   
     // 파일 닫기
-    fclose(fd);
+
+   //fclose(fd);
+    printf("%d %d\n", current->fd, current->pid); //current fd가 됐다가, 안됐다가 한다
+    pdbr = current->pgdir;
+    
 
 }
