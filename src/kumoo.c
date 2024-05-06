@@ -26,7 +26,7 @@ void ku_dump_swap(void){
     printf("\n");
 }
 
-void ku_reg_handler(int flag, int (*func)(unsigned short)){ //핸들러 등록
+void ku_reg_handler(int flag, int (*func)(unsigned short)){
 	switch(flag){
 		case SCHED:
 			kuos.sched = func;
@@ -42,33 +42,42 @@ void ku_reg_handler(int flag, int (*func)(unsigned short)){ //핸들러 등록
 	}
 }
 
-int ku_traverse(short va){
+int ku_traverse(unsigned short va, int write){
 	int pd_index, pt_index, pa;
-    unsigned short *ptbr;
-	short *pte, *pde;
-    int PFN;
+	unsigned short *ptbr;
+	unsigned short *pte, *pde;
+	int PFN;
 
-	pd_index = (va & 0xFFC0) >> 11; //va에서 page directory index를 계산한다
-	pde = pdbr + pd_index; //pdbr + page directory index로 page directory entry를 계산한다
+	pd_index = (va & 0xFFC0) >> 11;
+	pde = pdbr + pd_index;
+    //printf("pdbr : %d pdindex: %d pde: %d\n", pdbr, pd_index, pde);
 
-	if(!*pde)
+	if(!(*pde & 0x1)){
 		return -1;
+    }
     
-    PFN = (*pde & 0xFFF0) >> 4; //page directory entry에서 pfn을 얻는다
-    ptbr = (unsigned short*)(pmem + (PFN << 6)); //물리주소 + pfn(<<6은 페이지 크기를 곱한 것이다)으로 page table base register을 계산한다
+	PFN = (*pde & 0xFFF0) >> 4;
+	ptbr = (unsigned short*)(pmem + (PFN << 6));
+    //printf("PFN: %d ptbr: %d pmem: %d\n", PFN, ptbr, pmem);
+    //printf("pde : %d PFN : %d\n", *pde, PFN);
 
-    pt_index = (va & 0x07C0) >> 6; //va에서 page table index를 계산한다
-    pte = ptbr + pt_index; //page table base register + page table index로 page table entry를 접근한다
+	pt_index = (va & 0x07C0) >> 6;
+	pte = ptbr + pt_index;
+    //printf("ptbr: %d pt_index: %d pte: %d\n", ptbr, pt_index, pte);
 
-    if(!*pte)
+	if(!(*pte & 0x1)){
         return -1;
+    }
 
-    PFN = (*pte & 0xFFF0) >> 4; //page frame number를 찾는다
+	PFN = (*pte & 0xFFF0) >> 4;
 
-    pa = (PFN << 6)+(va & 0x3F); //물리주소는 [page frame number / va의 offset]
+	pa = (PFN << 6)+(va & 0x3F);
+    //printf("PFN: %x pa: %x\n\n", PFN, pa);
 
+    if (write)
+        *pte |= 0x2;
 
-	return pa; //물리주소를 반환한다
+	return pa;
 }
 
 
@@ -76,8 +85,8 @@ void ku_os_init(void){
     /* Initialize physical memory*/
     pfnum = 1 << 12;
     sfnum = 1 << 14;
-    pmem = (char*)malloc(64 << 12); //256kb 할당
-    swaps = (char*)malloc(64 << 14); //1mb 할당
+    pmem = (char*)malloc(64 << 12);
+    swaps = (char*)malloc(64 << 14);
     /* Init free list*/
     ku_freelist_init();
     /*Register handler*/
@@ -86,137 +95,162 @@ void ku_os_init(void){
 	ku_reg_handler(EXIT, ku_proc_exit);
 }
 
-void op_read(){
-    unsigned char va;
+int op_read(unsigned short pid){
+    unsigned short va;
     int addr, pa, ret = 0;
     char sorf = 'S';
 
-    printf("read함수 안에 들어왔음");
+    printf("\nop_read 진입\n");
     /* get Address from the line */
     if(fscanf(current->fd, "%d", &addr) == EOF){
         /* Invaild file format */
-        return;
+        return 1;
     }
-    printf("여기까지 들어오면 current->fd가 된것임");
-
-    va = addr & 0xFFFF; //가상 주소 16진수로 변환
-    pa = ku_traverse(va); //해당 가상주소에 대해 유효한 물리주소를 반환한다
+    va = addr & 0xFFFF;
+    pa = ku_traverse(va, 0);
 
     if (pa < 0){
         /* page fault!*/
         ret = kuos.pgfault(va);
-    } 
-    if (ret > 0){ //page fault가 실패하면
-        /* No free page frames or SEGFAULT */
-        sorf = 'E';
-        ret = kuos.exit(current->pid);
-        if (ret > 0){
-            /* invalid PID */
-            return;
+    	if (ret > 0){
+            /* No free page frames or SEGFAULT */
+            sorf = 'E';
+            ret = kuos.exit(current->pid);
+            if (ret > 0){
+                /* invalid PID */
+                return 1;
+            }
         }
-    }
-    else { //page fault가 성공하면
-        pa = ku_traverse(va);
-        sorf = 'F';
-    }
+        else {
+            pa = ku_traverse(va, 0);
+            sorf = 'F';
+        }
+    } 
 
     if (pa < 0){
-        printf("%d: %d -> (%c)\n", current->pid, va, sorf);
+        printf("%d: %d -> (%c)\n", pid, va, sorf);
+        return -1;
     }
     else {
-        printf("%d: %d -> %d (%c)\n", current->pid, va, pa, sorf);
+        printf("%d: %d -> %d (%c)\n", pid, va, pa, sorf);
+        return 0;
     }
   
 }
 
-void op_write(){
-    unsigned char va;
+int op_write(unsigned short pid){
+    unsigned short va;
     int addr, pa, ret = 0;
     char input ,sorf = 'S';
-    printf("write함수 안에 들어왔음");
     /* get Address from the line */
+
+    printf("\nop_write 진입\n");
     if(fscanf(current->fd, "%d %c", &addr, &input) == EOF){
         /* Invaild file format */
-        return;
+        return 1;
     }
     va = addr & 0xFFFF;
-    pa = ku_traverse(va);
+    pa = ku_traverse(va, 1);
 
     if (pa < 0){
         /* page fault!*/
         ret = kuos.pgfault(va);
-    } 
-    if (ret > 0){
-        /* No free page frames or SEGFAULT */
-        sorf = 'E';
-        ret = kuos.exit(current->pid);
-        if (ret > 0){
-            /* invalid PID */
-            return;
+    	if (ret > 0){
+            /* No free page frames or SEGFAULT */
+            sorf = 'E';
+            ret = kuos.exit(current->pid);
+            if (ret > 0){
+                /* invalid PID */
+                return 1;
+            }
         }
-    }
-    else {
-        pa = ku_traverse(va);
-        sorf = 'F';
-    }
+        else {
+            pa = ku_traverse(va, 1);
+            sorf = 'F';
+        }
+    } 
 
     if (pa < 0){
-        printf("%d: %d -> (%c)\n", current->pid, va, sorf);
+        printf("%d: %d -> (%c)\n", pid, va, sorf);
+        return -1;
     }
     else {
         *(pmem + pa) = input;
-        printf("%d: %d -> %d (%c)\n", current->pid, va, pa, sorf);
+        printf("%d: %d -> %d (%c)\n", pid, va, pa, sorf);
+        return 0;
     }
 
 }
 
-void do_ops(char op){
+int do_ops(char op){
     char sorf;
     int ret;
+    unsigned short pid = current->pid;
+
     switch(op){
         case 'r':
-            printf("read\n");
-            op_read();
+            printf("\n<<<   read case 진입   >>>\n");
+            ret = op_read(pid);
         break;
 
         case 'w':
-            op_write();
+            printf("\n<<<   write case 진입   >>>\n");
+            ret = op_write(pid);
         break;
 
         case 'e':
-            ret = kuos.exit(current->pid);
+            printf("\n<<<   exit case 진입   >>>\n");
+            ret = kuos.exit(pid);
             if (ret > 0){
                 /* invalid PID */
-                return;
+                return ret;
             }
+            return -1;
         break;
     }
+    return ret;
 
 }
 
 void ku_run_procs(void){
-	unsigned char va;
     char sorf;
 	int addr, pa, i;
     char op;
     int ret;
+    unsigned short pid = 0;
 
+    ret = kuos.sched(10);
+    /* No processes */
+
+    if (ret > 0)
+        return;
+    
 	do{
-		if(!current) //현재 실행되고 있는 프로세스가 없으면
-			exit(0); //종료한다
-        
-		for(i=0 ; i<TSLICE ; i++){
-            /* Get operation from the line */
-			if(fscanf(current->fd, "%c", &op) == EOF){ //현재 파일 디스크립터의 연산정보(w,r,e)를 넣는다
-                /* Invaild file format */
-                return;
-			
+		if(!current)
+			exit(0);
+
+		for( i=0 ; i<TSLICE ; i++){
+			    /* Get operation from the line */
+			if(fscanf(current->fd, " %c", &op) == EOF){
+				/* Invaild file format */
+				return;
+			}
+
+            
+            pid = current->pid;
+            printf("\n\nschedule : %d %c\n", pid, op);
+			ret = do_ops(op);
+		
+            /* process terminated */
+            if (ret < 0){
+                break;
             }
-            printf("문자 %d : %c\n", i, op);
-            do_ops(op); //연산 함수를 실행한다
+            else if( ret > 0){
+                /* something went wrong */
+            }
 		}
 
-		ret = kuos.sched(current->pid);
+		ret = kuos.sched(pid);
         /* No processes */
         if (ret > 0)
             return;
@@ -228,7 +262,7 @@ int main(int argc, char *argv[]){
 	/* System initialization */
 	ku_os_init();
 	/* Per-process initialization */
-	ku_proc_init(atoi(argv[1]), argv[2]);
+	ku_proc_init(argc, argv);
 	/* Process execution */
 	ku_run_procs();
 
