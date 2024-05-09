@@ -1,6 +1,6 @@
 #define ADDR_SIZE 16 //address size
 #define PAGE_SIZE 64
-#define PFNUM 4096 // 2^12
+#define PFNUM 6 //4096 // 2^12
 #define SFNUM 16384 //2^14
 #define VPN_SHIFT 6
 #define PFN_SHIFT 4
@@ -42,7 +42,7 @@ pcbNode *processList = NULL;
 //swap in page list
 typedef struct swapInPageNode{ 
     int pid; //해당 페이지의 process pid
-    char* pteAddress; //해당 페이지 정보가 담겨있는 pte 주소
+    unsigned short* teAddress; //해당 페이지 정보가 담겨있는 te 주소
     struct swapInPageNode *next;
 } swapInPageNode;
 swapInPageNode *swapInList = NULL;
@@ -73,15 +73,70 @@ void ku_freelist_init(void){
     //swap은 1부터 시작한다
 }
 
+void swapIn(unsigned short* TE, int distinct){
+
+    if(swapInList == NULL){
+        swapInList = (swapInPageNode *)malloc(sizeof(swapInPageNode));
+        if(distinct == -1){ //-1이면 PDE
+            swapInList->pid = distinct;
+        }else{
+            swapInList->pid = current->pid;
+        }
+
+        swapInList->teAddress = TE;
+        swapInList->next = NULL;
+    }else{
+        swapInPageNode* temp = swapInList;
+        while (temp->next != NULL) {
+            temp = temp->next;
+        }
+        temp->next = (swapInPageNode*)malloc(sizeof(swapInPageNode));
+         if(distinct == -1){ //-1이면 PDE
+             temp->next->pid = distinct;
+        }else{
+            temp->next->pid = current->pid;
+        }
+
+        temp->next->pid = current->pid;
+        temp->next->teAddress = TE;
+        temp->next->next = NULL;
+    }
+    printf("swapin에 추가했음\n");
+}
+
+void swapOut(swapInPageNode* eviction, swapInPageNode* swapOutPage, unsigned short* PTE, int i, int flag){
+    if((*(eviction->teAddress)| 0x0002) == 0){ // dirty bit이 0일때 쫓아내고 추가하기
+        eviction = eviction->next; //첫번째거 쫓아내기 but page directory를 쫓아내면 안된다 -> swap in list에 directory 정보를 넣지 않았다
+    }
+    else{ //dirty bit이 1일땐 swap space에 저장하고 추가하기
+        unsigned short *pte;
+        *pte = i << 2;
+        *pte = *pte | 0x0000; // present bit 0 설정
+
+        swaps[i] = *pte; // swap에 저장한다
+        swaps_free[i] = 1;
+        eviction = eviction->next; // list의 시작을 다음 노드로 변경
+        printf("swap에 저장했음\n");
+    } 
+    swapInList = eviction; // FIFO에 의해 첫번째 노드를 버리고 다음 노드를 가리킨다
+
+    int pfn = *(swapOutPage->teAddress) & 0xFFF0; //pfn을 얻어온다
+    *PTE = *(swapOutPage->teAddress) | 0x0001; // present bit 1 설정
+    pmem[i] = *PTE;
+    pmem_free[pfn] = 1;
+    swapIn(PTE, flag); //swap in list에 추가한다
+
+}
+
 
 int ku_pgfault_handler(unsigned short virtualADDR){ //16비트 (2byte)
 
-    printf("page fault 진입\n");
+    printf("\npage fault 진입\n");
 
     short offset = (virtualADDR & OFFSET_MASK);
     short VPN = (virtualADDR & VPN_MASK) >> VPN_SHIFT;
 
-    //printf("%d %d\n", current->bound, virtualADDR);
+    // 근데 그 전에 bound를 넘는 번지를 접근했으면? -> 접근했다면 page fault가 발생하지 않는다
     if(current->base > virtualADDR || current->bound <= virtualADDR) return 1;
 
     unsigned short PDindex = (VPN & PD_MASK) >> SHIFT;
@@ -91,154 +146,88 @@ int ku_pgfault_handler(unsigned short virtualADDR){ //16비트 (2byte)
     ptbr = (unsigned short*)(pmem + (PFN << 6));
     unsigned short PTindex = (VPN & PT_MASK);
     unsigned short* PTE = ptbr + PTindex;
+    //unsigned short* page_table_entry = ptbr+VPN;
     
-    if((*PTE & 0x0001) == 0 && *PTE != 0){
-        int pfn = (*PTE & 0xFFFC) >> 2;
-        memset(&swaps[pfn * PAGE_SIZE], 0, PAGE_SIZE);
-        swaps_free[pfn] = 0;
+    /*disk에 있는 pte 또는 page를 밖으로 뺀다 (pmem이 남아있으면 넣을 것이고, 아니면 eviction에서 넣을 것이기 때문)*/
+
+    if(!(*PDE & 0x1)){ //PDE present bit이 1이면 pte가 pmem에 존재한다 (PDE는 swap out되지 않는다)
+        if(*PDE != 0){
+            //해당 pte가 disk에 존재하는 것이다
+            int pfn = (*PDE & 0xFFFC) >> 2; // swap space offset을 구한다
+            swaps[pfn] = 0; // swaps에서 해당 pte 또는 page를 뺀다
+            swaps_free[pfn] = 0; // free list 업데이트
+        }
+
+        if(!(*PTE & 0x1) && *PTE != 0){  //PTE의 present bit이 0인데, PTE의 값이 0이 아니면(처음 접근하면 무조건 0으로 세팅되어있기 때문)
+             //해당 page가 disk에 존재하는 것이다
+            int pfn = (*PTE & 0xFFFC) >> 2; // swap space offset을 구한다
+            swaps[pfn] = 0;
+            swaps_free[pfn] = 0; // free list 업데이트
+        }
     }
+
+
+    /* 물리 메모리가 남아있을 때 */
 
     for(int i = 0; i < PFNUM; i++){
         if(pmem_free[i] == 0){
-            *PDE = (i << 4) | 0x0001;
-            PFN = (*PDE & PFN_MASK) >> PFN_SHIFT;
-            ptbr = (unsigned short*)(pmem + (PFN << 6));
-            PTindex = (VPN & PT_MASK);
-            PTE = ptbr + PTindex;
-            *PTE = (i << 4) | 0x0001;
-
-            if(swapInList == NULL){
-                swapInList = (swapInPageNode *)malloc(sizeof(swapInPageNode));
-                swapInList->pid = current->pid;
-                swapInList->pteAddress = PTE;
-                swapInList->next = NULL;
-            }else{
-                swapInPageNode* temp = swapInList;
-                while (temp->next != NULL) {
-                    temp = temp->next;
-                }
-                temp->next = (swapInPageNode*)malloc(sizeof(swapInPageNode));
-                temp->next->pid = current->pid;
-                temp->next->pteAddress = PTE;
-                temp->next->next = NULL;
+            printf("pmem free : %d\n", i);
+            if(!(*PDE & 0x1)){
+                *PDE = (i << 4) | 0x0001;
+                
+                pmem[i] = *PDE;
+                pmem_free[i] = 1;
+                swapIn(PDE, -1);
+                
+                PFN = (*PDE & PFN_MASK) >> PFN_SHIFT;
+                ptbr = (unsigned short*)(pmem + (PFN << 6));
+                PTindex = (VPN & PT_MASK);
+                PTE = ptbr + PTindex;
+                i++;
             }
-            //memset(&pmem[i * PAGE_SIZE], 1, PAGE_SIZE);
+            *PTE = (i << 4) | 0x0001;
+            pmem[i] = *PTE;
             pmem_free[i] = 1;
+            swapIn(PTE, 0);
 
             printf("page fault 성공\n");
             return 0;
         }
     }
-
-    // printf("page fault 진입\n");
-
-    // //접근하려는 vpn이 page table entry의 개수보다 클때
-    // short offset = (virtualADDR & OFFSET_MASK);
-    // short VPN = (virtualADDR & VPN_MASK) >> VPN_SHIFT;
-
-    // //printf("%d %d\n", current->bound-1, virtualADDR);
-    // if(current->base > virtualADDR || current->bound-1 < virtualADDR) return 0;
-    // //base가 0일때만 가능한 조건?
-
-    // unsigned short PDindex = (VPN & PD_MASK) >> SHIFT;
-    // short* PDE = pdbr + PDindex; //pdbr 현재 프로세스의 pdbr로 변경
-
     
-    // int PFN = (*PDE & PFN_MASK) >> PFN_SHIFT;
-    // ptbr = (unsigned short*)(pmem+(PFN << 6));
-    // unsigned short PTindex = (VPN & PT_MASK);
-    // short* PTE = ptbr + PTindex;
-
-    // //접근하려는 pfn이 disk에 있을 때
-    // if((*PTE & 0x0001) == 0 && ((*PTE) << 1) != 0){ //present bit가 0인데, pfn이나 dirty가 0이 아니라면 swap out 되어있는 것
-        
-    //     int pfn = (*PTE & 0xFFFC) >> 2;
-    //     memset(&swaps[pfn * PAGE_SIZE], 0, PAGE_SIZE); //메모리에서 없애기
-    //     //present bit 1로 바꾸기 (비어있는 메모리에 넣을때 설정할 것이다)
-    //     swaps_free[pfn] = 0; //freelist 0으로 업데이트
-
-
-    //      //pfn이 swap offset이므로 swap offset으로 접근한다
-    //      //비어있는 메모리가 있으면 present bit을 1로 설정한다 / pfn을 재설정한다
-    //      //비어있는 메모리가 없으면 (아래와 같음)
-    // }
-
-    // //비어있는 메모리가 있을때
-    // for(int i = 0; i<PFNUM; i++){
-    //     if(pmem_free[i] == 0){
-    //         *PDE = *PDE | 0x1; // present bit 1 설정
-    //         *PTE = i << 4; // pfn 저장
-    //         *PTE = *PTE | 0x1; // present bit 1 설정
-
-    //         //printf("page fault 안에서 : pte %x pfn %x\n", PTE, PFN);
-
-    //         if(swapInList == NULL){
-    //             swapInList = (swapInPageNode *)malloc(sizeof(swapInPageNode));
-    //             swapInList->pid = current->pid;
-    //             swapInList->pteAddress = PTE;
-    //             swapInList->next = NULL;
-    //         }else{
-    //             swapInPageNode* temp = swapInList;
-    //             while (temp->next != NULL) {
-    //                 temp = temp->next;
-    //             }
-    //             temp->next = (swapInPageNode*)malloc(sizeof(swapInPageNode));
-    //             temp->next->pid = current->pid;
-    //             temp->next->pteAddress = PTE;
-    //             temp->next->next = NULL;
-    //         }
-    //         memset(&pmem[i * PAGE_SIZE], 1, PAGE_SIZE); //메모리 사용중 암시
-    //         pmem_free[i] = 1;
-    //         //swap in list에 추가한다
-            
-    //         printf("page fault 성공\n");
-    //         return 0;
-    //     }
-
-
-    // }
-    
-    //physical memory가 다 찼을 때
-    
-    for(int i = 0; i<SFNUM; i += PAGE_SIZE){
+    /* 물리 메모리가 다 찼을 때 */
+    printf("물리 메모리가 다 찼을 때\n");
+    for(int i = 0; i<SFNUM; i ++){
         
             if(swaps_free[i] == 0){ //swap space가 남았을 때
 
                 swapInPageNode *swapOutPage = swapInList;
                 swapInPageNode *eviction = swapInList; 
                 
-                if((*(eviction->pteAddress) | 0x0002) == 0){ // dirty bit이 0일때 쫓아내고 추가하기
-                    eviction->next = NULL; //첫번째거 쫓아내기 but page directory를 쫓아내면 안된다(how?)
+                if(eviction->pid == -1){ //PTE에 연결된 page가 모두 disk에 있거나, 유효하지 않을 경우 eviction을 해도 된다
+                    int flag = 1;
+                    unsigned short* pde = eviction->teAddress;
+                    int pfn = (*pde & PFN_MASK) >> PFN_SHIFT;
+                    ptbr = (unsigned short*)(pmem + (pfn << 6));
+
+                    for(int i = 0 ; i< PAGE_SIZE/2; i++){ //32
+                        unsigned short* pte = ptbr + i;
+                        if(*pte & 0x1){
+                            flag = 0;
+                            break;
+                        }
+                    }
+
+                    if(flag == 1){
+                        printf("pte를 뺄 것이다\n");
+                        swapOut(eviction, swapOutPage, PTE, i, -1);
+                    }
                 }
-                else{ //dirty bit이 1일땐 swap space에 저장하고 추가하기
-                    *PTE = i << 2;
-                    *PTE = *PTE | 0x0000; // present bit 1 설정
-                    memcpy(&swaps[i * PAGE_SIZE], (char*)1, PAGE_SIZE); //메모리에 해당 current pcb 적재
-                    swaps_free[i] = 1;
-                    eviction->pteAddress = PTE;
-                    eviction->next = NULL;
-                } 
+                printf("page를 뺄 것이다\n");
+                swapOut(eviction, swapOutPage, PTE, i, 0);
 
-
-                int pfn = *(eviction->pteAddress)&0xFFF0; //pfn을 얻어온다
-                *PTE = *(eviction->pteAddress) | 0x0001; // present bit 1 설정
-
-                memcpy(&pmem[pfn * PAGE_SIZE], (char*)1, PAGE_SIZE); //메모리 사용중 암시
-                //pidcount로 directory사이즈를 확보했는데, 만약 pidcount가 삭제 된다면? 비어있는 메모리는 어떡하지?
-                pmem_free[pfn] = 1;
-
-                //swap in list에 추가한다
-                swapInPageNode* temp = eviction;
-                while (temp->next != NULL) {
-                    temp = temp->next;
-                }
-                temp->next = (swapInPageNode*)malloc(sizeof(swapInPageNode));
-                temp->next->pid = current->pid;
-                temp->next->pteAddress = PTE;
-                temp->next->next = NULL;
-
-                swapInList = eviction;
                 return 0;
+
         //dirty bit이 0이면 물리메모리에서 그냥 버린다
         //swap in list안에 있는 것 중 첫번째를 swap out(swaps)로 옮긴다 (FIFO)
         //옮겨진 swaps의 주소를 저장한다 (pfn)
@@ -256,8 +245,8 @@ int ku_scheduler(unsigned short pid){ //현재 실행되고 있는 current proce
     if(processList == NULL){
         return 1;
     }else{
-        //printf("pid : %d pidCount : %d", pid, pidCount);
-        if(pid == 10 || pid == pidCount){ //pid는 0부터 시작하기 때문
+        //printf("pid : %d pidCount : %d\n", pid, pidCount);
+        if(pid == 10 || pid == pidCount-1){ //pid는 0부터 시작하기 때문
             nextpid = first;
         }else{
             nextpid = pid+1;
@@ -275,6 +264,7 @@ int ku_scheduler(unsigned short pid){ //현재 실행되고 있는 current proce
                 }
                 cur = cur->next;
             }
+            nextpid++;
         }
     }
 
@@ -313,12 +303,13 @@ int ku_proc_exit(unsigned short pid){ //종료시킬 pid가 넘어온다
 
             // 여기서 메모리와 스왑 공간을 정리하는 로직은 실제 시스템의 자원 관리 방식에 따라 달라질 수 있음
             //memset(&pmem[pidCount * PAGE_SIZE], 0, PAGE_SIZE); // pmem 관련 로직은 시스템의 메모리 관리 상황에 따라 조정 필요
-            swaps_free[pidCount] = 0; // 스왑 프레임 해제
+            
+            //pmem_free[pidCount] = 0; // 스왑 프레임 해제 !! (이걸 수정해야해)
 
             // pidCount 감소는 전역 카운터를 조작하므로 주의해서 사용
-            if(pidCount != 0){
-                pidCount--;
-            }
+            // if(pidCount != 0){
+            //     pidCount--;
+            // }
 
             return 0; // 성공적으로 처리
         }
@@ -347,7 +338,7 @@ void ku_proc_init(int argc, char *argv[]){
 
     while(fscanf(fd, "%d %s", &pid, processName) != EOF){ //더이상 읽히지 않을때까지
 
-        printf("%d %s\n", pid, processName);  //pid가 같은게 없는 경우(pid가 같은게 여러개일 경우가 있을까?
+        //printf("%d %s\n", pid, processName);  //pid가 같은게 없는 경우(pid가 같은게 여러개일 경우가 있을까?
 
         pcbNode *temp = processList;
         pcbNode *prev = NULL;
@@ -366,7 +357,7 @@ void ku_proc_init(int argc, char *argv[]){
         }
 
         // 새 노드 추가
-        if (!found) {
+        if (!found && pidCount < 10) {
             pcbNode *newNode = (pcbNode *)malloc(sizeof(pcbNode));
             if (newNode == NULL) {
                 perror("메모리 할당 실패");
@@ -374,7 +365,7 @@ void ku_proc_init(int argc, char *argv[]){
             }
             newNode->next = NULL;
             newNode->pcblock.pid = pid;
-            newNode->pcblock.pgdir = (unsigned short *)calloc(32, sizeof(unsigned short));
+            newNode->pcblock.pgdir = (unsigned short *)calloc(32, sizeof(unsigned short)); //pgdir 초기화가 필요한가?
             newNode->pcblock.fd = fopen(processName, "r+");
 
             char c;
@@ -383,22 +374,25 @@ void ku_proc_init(int argc, char *argv[]){
                 free(newNode);
                 return;
             }
-            printf("%d %d %d\n", newNode->pcblock.pid, newNode->pcblock.base, newNode->pcblock.bound);
+            //printf("%d %d %d\n", newNode->pcblock.pid, newNode->pcblock.base, newNode->pcblock.bound);
 
             if (prev) {
                 prev->next = newNode;
             } else {
                 processList = newNode; // 리스트가 비어있었다면 헤드 설정
             }
+
+            //printf("pidCount %d\n", pidCount);
+            pmem[pidCount] = *newNode->pcblock.pgdir;
+            pmem_free[pidCount] = 1;
             pidCount++;
-            printf("node : %d\n", newNode->pcblock.fd); //왜 newprocessnode로 접근하면 오류가 생기지?
+            //printf("pidcount\n", pidCount);
+            //printf("node : %d\n", newNode->pcblock.fd); //왜 newprocessnode로 접근하면 오류가 생기지?
         }
 
         // swap에 pgdir만큼의 크기를 할당해야한다
-        memcpy(&swaps[pidCount * PAGE_SIZE], processList->pcblock.pgdir, PAGE_SIZE);
-        swaps_free[pidCount] = 1; //pidcount를 곱하는게 맞아?
         
-        printf("\n");
+        //printf("\n");
 
     }
 
@@ -406,117 +400,3 @@ void ku_proc_init(int argc, char *argv[]){
     fclose(fd);
     current = (struct pcb*)malloc(sizeof(struct pcb));
 }
-
- // if(processList == NULL){ // process가 하나도 실행되지 않았을 때
-        //     processList = (pcbNode *)malloc(sizeof(pcbNode));
-        //     processList->next = NULL;
-
-        //     processList->pcblock.pid = pid;
-        //     processList->pcblock.pgdir = (unsigned short*)malloc(sizeof(unsigned short)*32); //page table 생성
-        //     processList->pcblock.fd = fopen(processName, "r+");
-
-        //     char d;
-        //     int base, bound;
-        //     if (fscanf(processList->pcblock.fd, "%c %d %d", &d, &base, &bound) == EOF) {
-        //         return;
-        //     }
-
-        //     printf("%c %d %d\n",d,base,bound);
-        //     processList->pcblock.base = base;
-        //     processList->pcblock.bound = bound;              
-        //     pidCount++;
-
-        //     for(int i=0; i<PAGE_SIZE; i++){
-        //         processList->pcblock.pgdir[i] = 0;
-        //     }
-
-        //     current = NULL;
-        //     current = (struct pcb*)malloc(sizeof(struct pcb));
-        //     current->fd = processList->pcblock.fd;
-        //     current->pgdir = processList->pcblock.pgdir;
-        //     current->pid = processList->pcblock.pid;
-
-        //     //printf("two : %d %d\n", current->fd, processList->pcblock.fd);
-
-        // }else{ // process가 하나 이상 실행됐을 때
-        //     struct pcbNode* temp = processList;
-        //     while(1){
-        //         if(temp->pcblock.pid == pid){ //pid가 같은 경우가 있는지 확인한다
-        //             fclose(temp->pcblock.fd);
-        //             temp->pcblock.fd = fopen(processName, "r+");
-
-        //             processList = temp;
-        //             break;
-        //         }
-        //         else if(temp->next == NULL){
-        //             temp->next = (pcbNode*)malloc(sizeof(pcbNode));
-        //             temp = temp->next;
-        //             temp->next = NULL;
-        //             temp->pcblock.pid = pid;
-        //             temp->pcblock.pgdir = (unsigned short*)malloc(sizeof(unsigned short)*32);
-        //             for(int i=0; i<PAGE_SIZE; i++){
-        //                 temp->pcblock.pgdir[i] = 0;
-        //             }
-                    
-        //             temp->pcblock.fd = fopen(processName, "r+");
-
-        //             char d;
-        //             int base, bound;
-        //             if (fscanf(temp->pcblock.fd, "%c %d %d", &d, &base, &bound) == EOF) {
-        //                 return;
-        //             }
-        //             temp->pcblock.base = base;
-        //             temp->pcblock.bound = bound;
-
-        //             processList = temp;
-        //             pidCount++;
-
-        //             break;
-
-        //         }
-        //         temp = temp->next;
-        //     }
-
-        // }
-
-// int ku_proc_exit(unsigned short pid){ //종료시킬 pid가 넘어온다
-//     //process의 pcb를 삭제한다
-//     //process의 page frame과 swap frame의 자원을 회수한다
-//     //free list를 업데이트한다
-
-//     struct pcbNode* prev;
-//     struct pcbNode *cur = processList;
-
-//     while(cur != NULL){ //for(int i =0; i<pidCount; i++)
-//         if(cur->pcblock.pid == pid){ //pid가 같은 경우가 있는지 확인한다
-           
-//            fclose(cur->pcblock.fd); //해당 pcb의 file close
-//            free(cur->pcblock.pgdir); //page directory 자원해제
-//            free(cur); //해당 pcb 해제
-//            cur = NULL;
-
-
-//             //리스트에서 해당 프로세스 노드 제거
-//             if (prev != NULL) {
-//                 prev->next = cur->next;
-//             } else {
-//                 processList = cur->next;
-//             }
-//             free(current); //해당 pcb 해제
-
-//             memset(&pmem[pidCount * PAGE_SIZE], 0, PAGE_SIZE);
-//             swaps_free[pidCount] = 0;
-
-//             // pidCount 감소
-//             pidCount--;
-
-//            return 0;
-//         }
-//         prev = cur;
-//         current = cur->next;
-//     }
-
-//     //invalid pid
-//     return 1;
-
-// } 

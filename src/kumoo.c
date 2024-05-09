@@ -55,7 +55,7 @@ int ku_traverse(unsigned short va, int write){
 	if(!(*pde & 0x1)){
 		return -1;
     }
-    
+    //printf("pde 성공\n");
 	PFN = (*pde & 0xFFF0) >> 4;
 	ptbr = (unsigned short*)(pmem + (PFN << 6));
     //printf("PFN: %d ptbr: %d pmem: %d\n", PFN, ptbr, pmem);
@@ -68,11 +68,12 @@ int ku_traverse(unsigned short va, int write){
 	if(!(*pte & 0x1)){
         return -1;
     }
+    //printf("pte 성공\n");
 
 	PFN = (*pte & 0xFFF0) >> 4;
 
 	pa = (PFN << 6)+(va & 0x3F);
-    //printf("PFN: %x pa: %x\n\n", PFN, pa);
+    //printf("PFN: %d pa: %d\n\n", PFN, pa);
 
     if (write)
         *pte |= 0x2;
@@ -100,7 +101,7 @@ int op_read(unsigned short pid){
     int addr, pa, ret = 0;
     char sorf = 'S';
 
-    printf("\nop_read 진입\n");
+    //printf("\nop_read 진입\n");
     /* get Address from the line */
     if(fscanf(current->fd, "%d", &addr) == EOF){
         /* Invaild file format */
@@ -144,7 +145,7 @@ int op_write(unsigned short pid){
     char input ,sorf = 'S';
     /* get Address from the line */
 
-    printf("\nop_write 진입\n");
+    //printf("\nop_write 진입\n");
     if(fscanf(current->fd, "%d %c", &addr, &input) == EOF){
         /* Invaild file format */
         return 1;
@@ -189,12 +190,12 @@ int do_ops(char op){
 
     switch(op){
         case 'r':
-            printf("\n<<<   read case 진입   >>>\n");
+            //printf("\n<<<   read case 진입   >>>\n");
             ret = op_read(pid);
         break;
 
         case 'w':
-            printf("\n<<<   write case 진입   >>>\n");
+            //printf("\n<<<   write case 진입   >>>\n");
             ret = op_write(pid);
         break;
 
@@ -238,8 +239,9 @@ void ku_run_procs(void){
 
             
             pid = current->pid;
-            printf("\n\nschedule : %d %c\n", pid, op);
+            //printf("\n\nschedule : %d %c\n", pid, op);
 			ret = do_ops(op);
+            
 		
             /* process terminated */
             if (ret < 0){
@@ -251,6 +253,7 @@ void ku_run_procs(void){
 		}
 
 		ret = kuos.sched(pid);
+        //printf("%d\n", ret);
         /* No processes */
         if (ret > 0)
             return;
@@ -266,5 +269,6 @@ int main(int argc, char *argv[]){
 	/* Process execution */
 	ku_run_procs();
 
+    //ku_dump_pmem();
 	return 0;
 }
