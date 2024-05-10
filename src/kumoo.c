@@ -63,7 +63,7 @@ int ku_traverse(unsigned short va, int write){
 
 	pt_index = (va & 0x07C0) >> 6;
 	pte = ptbr + pt_index;
-    //printf("ptbr: %d pt_index: %d pte: %d\n", ptbr, pt_index, pte);
+    //printf("ptbr: %d pt_index: %d pte: %d\n", ptbr, pt_index, *pte);
 
 	if(!(*pte & 0x1)){
         return -1;
@@ -73,7 +73,7 @@ int ku_traverse(unsigned short va, int write){
 	PFN = (*pte & 0xFFF0) >> 4;
 
 	pa = (PFN << 6)+(va & 0x3F);
-    //printf("PFN: %d pa: %d\n\n", PFN, pa);
+    //printf("###PFN: %d pte: %d\n\n", PFN, *pte);
 
     if (write)
         *pte |= 0x2;
@@ -241,7 +241,6 @@ void ku_run_procs(void){
             pid = current->pid;
             //printf("\n\nschedule : %d %c\n", pid, op);
 			ret = do_ops(op);
-            
 		
             /* process terminated */
             if (ret < 0){
@@ -251,7 +250,7 @@ void ku_run_procs(void){
                 /* something went wrong */
             }
 		}
-
+        printf("-----------------------\n");
 		ret = kuos.sched(pid);
         //printf("%d\n", ret);
         /* No processes */

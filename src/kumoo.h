@@ -11,8 +11,6 @@
 #define PT_MASK 0x001F
 #define PFN_MASK 0xFFF0 //0xFFC0?
 
-#include<string.h>
-
 struct pcb *current; // 현재 실행하고 있는 pcb를 가리키는 포인터
 unsigned short *pdbr; //page directory base주소를 가리키는 포인터
 unsigned short *ptbr; // page table base 주소를 가리키는 포인터
@@ -42,7 +40,7 @@ pcbNode *processList = NULL;
 //swap in page list
 typedef struct swapInPageNode{ 
     int pid; //해당 페이지의 process pid
-    unsigned short* teAddress; //해당 페이지 정보가 담겨있는 te 주소
+    unsigned short teAddress; //해당 페이지 정보가 담겨있는 te 주소
     struct swapInPageNode *next;
 } swapInPageNode;
 swapInPageNode *swapInList = NULL;
@@ -75,56 +73,86 @@ void ku_freelist_init(void){
 
 void swapIn(unsigned short* TE, int distinct){
 
-    if(swapInList == NULL){
-        swapInList = (swapInPageNode *)malloc(sizeof(swapInPageNode));
-        if(distinct == -1){ //-1이면 PDE
-            swapInList->pid = distinct;
-        }else{
-            swapInList->pid = current->pid;
-        }
+    swapInPageNode *temp = swapInList;
 
-        swapInList->teAddress = TE;
-        swapInList->next = NULL;
+    swapInPageNode *newNode = (swapInPageNode *)malloc(sizeof(swapInPageNode));
+    if(distinct == -1){ //-1이면 PDE
+        newNode->pid = distinct;
     }else{
-        swapInPageNode* temp = swapInList;
-        while (temp->next != NULL) {
-            temp = temp->next;
-        }
-        temp->next = (swapInPageNode*)malloc(sizeof(swapInPageNode));
-         if(distinct == -1){ //-1이면 PDE
-             temp->next->pid = distinct;
-        }else{
-            temp->next->pid = current->pid;
-        }
-
-        temp->next->pid = current->pid;
-        temp->next->teAddress = TE;
-        temp->next->next = NULL;
+        newNode->pid = current->pid;
     }
-    printf("swapin에 추가했음\n");
+
+    newNode->teAddress = *TE; //주소가 가리킨 값이 바뀌는 이유가 뭐지??!!!!!
+    newNode->next = NULL;
+
+    if (temp != NULL) {
+        while(temp->next != NULL)
+            temp = temp->next;
+        temp->next = newNode;
+    } else {
+        swapInList = newNode; // 리스트가 비어있었다면 헤드 설정
+    }
+
+    int pfn = swapInList->teAddress & 0xFFF0;
+    pfn = pfn >> 4;
+
 }
 
 void swapOut(swapInPageNode* eviction, swapInPageNode* swapOutPage, unsigned short* PTE, int i, int flag){
-    if((*(eviction->teAddress)| 0x0002) == 0){ // dirty bit이 0일때 쫓아내고 추가하기
-        eviction = eviction->next; //첫번째거 쫓아내기 but page directory를 쫓아내면 안된다 -> swap in list에 directory 정보를 넣지 않았다
+    swapInPageNode* prev = NULL;
+
+    if(flag == 0){ // pte를 내보낼 것이 아니라면, page부분으로 간다
+        while(eviction->pid == -1){
+            prev = eviction;
+            eviction = eviction->next;
+        }
+    }
+
+    int pfn = (eviction->teAddress) & 0xFFF0; //pfn을 얻어온다
+    pfn = pfn >> 4;
+
+    *PTE = pfn << 4 | 0x0001; // present bit 1 설정
+    printf("\n ** 해당 PTE : %d PFN : %d 에 저장해서, 이걸로 pa가 계산된다**\n", *(PTE), pfn);
+    pmem[pfn] = *PTE;
+    pmem_free[pfn] = 1;
+
+    swapIn(PTE, flag); //swap in list에 추가한다
+
+
+    if(((eviction->teAddress)| 0x0002) == 0){ // dirty bit이 0일때 쫓아내고 추가하기
+        if (prev != NULL) {
+            prev->next = eviction->next; // 첫번째거 쫓아내기
+        }else{
+            eviction = eviction->next;
+        }
+    //첫번째거 쫓아내기 but page directory를 쫓아내면 안된다 -> swap in list에 directory 정보를 넣지 않았다
     }
     else{ //dirty bit이 1일땐 swap space에 저장하고 추가하기
-        unsigned short *pte;
-        *pte = i << 2;
-        *pte = *pte | 0x0000; // present bit 0 설정
+        
+        unsigned short *pte = (unsigned short *)malloc(sizeof(unsigned short));
+        *pte = (i << 2) | 0x0000; // present bit 0 설정
 
         swaps[i] = *pte; // swap에 저장한다
         swaps_free[i] = 1;
-        eviction = eviction->next; // list의 시작을 다음 노드로 변경
+
+        if (prev != NULL) {
+            prev->next = eviction->next; // 첫번째거 쫓아내기
+        }else{
+            eviction = eviction->next;
+        }
+        // list의 시작을 다음 노드로 변경
+
+
         printf("swap에 저장했음\n");
     } 
-    swapInList = eviction; // FIFO에 의해 첫번째 노드를 버리고 다음 노드를 가리킨다
+    
 
-    int pfn = *(swapOutPage->teAddress) & 0xFFF0; //pfn을 얻어온다
-    *PTE = *(swapOutPage->teAddress) | 0x0001; // present bit 1 설정
-    pmem[i] = *PTE;
-    pmem_free[pfn] = 1;
-    swapIn(PTE, flag); //swap in list에 추가한다
+    swapInPageNode* t = swapInList;
+    while(t != NULL){
+        printf("%d ", t->teAddress);
+        t = t->next;
+    }
+    printf("\n");
 
 }
 
@@ -171,7 +199,7 @@ int ku_pgfault_handler(unsigned short virtualADDR){ //16비트 (2byte)
 
     for(int i = 0; i < PFNUM; i++){
         if(pmem_free[i] == 0){
-            printf("pmem free : %d\n", i);
+            //printf("pmem free : %d\n", i);
             if(!(*PDE & 0x1)){
                 *PDE = (i << 4) | 0x0001;
                 
@@ -180,14 +208,18 @@ int ku_pgfault_handler(unsigned short virtualADDR){ //16비트 (2byte)
                 swapIn(PDE, -1);
                 
                 PFN = (*PDE & PFN_MASK) >> PFN_SHIFT;
+                printf("handeler : PDE : PFN %d %d\n", *(PDE), PFN);
                 ptbr = (unsigned short*)(pmem + (PFN << 6));
                 PTindex = (VPN & PT_MASK);
                 PTE = ptbr + PTindex;
                 i++;
             }
+
+            if(i >= PFNUM) break;
             *PTE = (i << 4) | 0x0001;
             pmem[i] = *PTE;
             pmem_free[i] = 1;
+            printf("handeler : PTE : PFN %d %d\n", *(PTE), i);
             swapIn(PTE, 0);
 
             printf("page fault 성공\n");
@@ -196,7 +228,7 @@ int ku_pgfault_handler(unsigned short virtualADDR){ //16비트 (2byte)
     }
     
     /* 물리 메모리가 다 찼을 때 */
-    printf("물리 메모리가 다 찼을 때\n");
+    printf("\n물리 메모리가 다 찼을 때\n");
     for(int i = 0; i<SFNUM; i ++){
         
             if(swaps_free[i] == 0){ //swap space가 남았을 때
@@ -206,8 +238,8 @@ int ku_pgfault_handler(unsigned short virtualADDR){ //16비트 (2byte)
                 
                 if(eviction->pid == -1){ //PTE에 연결된 page가 모두 disk에 있거나, 유효하지 않을 경우 eviction을 해도 된다
                     int flag = 1;
-                    unsigned short* pde = eviction->teAddress;
-                    int pfn = (*pde & PFN_MASK) >> PFN_SHIFT;
+                    unsigned short pde = eviction->teAddress;
+                    int pfn = (pde & PFN_MASK) >> PFN_SHIFT;
                     ptbr = (unsigned short*)(pmem + (pfn << 6));
 
                     for(int i = 0 ; i< PAGE_SIZE/2; i++){ //32
@@ -219,14 +251,36 @@ int ku_pgfault_handler(unsigned short virtualADDR){ //16비트 (2byte)
                     }
 
                     if(flag == 1){
-                        printf("pte를 뺄 것이다\n");
-                        swapOut(eviction, swapOutPage, PTE, i, -1);
+                        printf("pte를 뺄 것이다\n"); //
+                        if(!(*PDE & 0x1)){
+                            swapOut(eviction, swapOutPage, PDE, i, 0);
+                            PFN = (*PDE & PFN_MASK) >> PFN_SHIFT;
+                            ptbr = (unsigned short*)(pmem + (PFN << 6));
+                            PTindex = (VPN & PT_MASK);
+                            PTE = ptbr + PTindex;
+                        }else{
+                            eviction = swapInList; 
+                            swapOutPage = swapInList;
+                            swapOut(eviction, swapOutPage, PTE, i, 0);
+                            break;
+                        }
+                    }
+                }else{
+                    printf("page를 뺄 것이다\n");
+                    if(!(*PDE & 0x1)){
+                        swapOut(eviction, swapOutPage, PDE, i, 0);
+                        PFN = (*PDE & PFN_MASK) >> PFN_SHIFT;
+                        ptbr = (unsigned short*)(pmem + (PFN << 6));
+                        PTindex = (VPN & PT_MASK);
+                        PTE = ptbr + PTindex;
+                    }else{
+                        eviction = swapInList; 
+                        swapOutPage = swapInList;
+                        swapOut(eviction, swapOutPage, PTE, i, 0);
+                        break;
                     }
                 }
-                printf("page를 뺄 것이다\n");
-                swapOut(eviction, swapOutPage, PTE, i, 0);
-
-                return 0;
+                
 
         //dirty bit이 0이면 물리메모리에서 그냥 버린다
         //swap in list안에 있는 것 중 첫번째를 swap out(swaps)로 옮긴다 (FIFO)
@@ -234,6 +288,7 @@ int ku_pgfault_handler(unsigned short virtualADDR){ //16비트 (2byte)
         //pde, pte를 업데이트한다 (swap offset으로 변경 / present bit 1)
         }
     }
+    return 0;
 
 }
 
